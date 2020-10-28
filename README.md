@@ -5,7 +5,8 @@ The first case studied transcriptomic and proteomic changes during cell cycle in
 Propagation analysis on multi-layer networks identifies regulatory mechanisms and function prediction during the HeLa cell cycle. 
 It was also applied on maize organism to study the dynamic responses to aphid feeding.
 
-In this repository, you will find script to conduct both analysis.
+In this repository, you will find R scripts to conduct both analysis (`HeLa_Cell_Cycling/` and `Maize_Aphid_Feeding/`).
+
 In each folder, there are:
 
 * an `.Rmd` file: main script
@@ -13,4 +14,15 @@ In each folder, there are:
 * `figure/` folder: main figures display in the article
 * intermediare `.rda` files
 
+The following R packages are required:
 
+* tidyverse
+* mixOmics
+* timeOmics
+* igraph
+* minet
+* gprofilet2
+* RandomWalkRestartMH
+* GO.db
+* ComplexHeatmap
+* org.Hs.eg.db
