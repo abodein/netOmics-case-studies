@@ -1,0 +1,46 @@
+Compound_ID	Compound	Cluster
+C01401;C00041;C00133	alanine	2
+C00062;C00792;C02385	arginine	1
+C16433;C00049;C00402	aspartate	-1
+C00303;C00064;C00819	glutamine	2
+C00025;C00217;C00302	glutamate	-1
+C00615;C00135;C06419;C00768	histidine	-1
+C16434; C00407;C06418	isoleucine	-2
+C00123;C01570;C16439	leucine	-2
+C00047;C00739;C16440	lysine	-2
+C00079;C02265;C02057	phenylalanine	-2
+C00152;C01905;C16438;C03021;C00065;C00716;C00740;C02057	serine/asparagine	2
+C00188;C00820	threonine	1
+C00082;C00585;C01536;C06420	tyrosine	-1
+C16436;C00183;C06417	valine	1
+	6-methoxybenzoxazolinone (6-MBOA)	1
+	kauralexin B1 (methyl ester derivative)	1
+	kauralexin A1 (methyl ester derivative)	1
+	kauralexin A3 (methyl ester derivative)	1
+	kauralexin B3 (methyl ester derivative)	-1
+C11874	ent-kaur-16-en-18-oic acid ( (methyl ester derivative)	-2
+C03425	oleic acid (methyl ester derivative)	1
+	steric acid (methyl ester derivative)	1
+C01595	linoleic acid (methyl ester derivative)	1
+C06427	linolenic acid (methyl ester derivative)	1
+C00108	anthranilic acid (methyl ester derivative)	1
+C00954	indole-3-acetic acid (methyl ester derivative)	-1
+C00463	Indole	-2
+C08491	trans-jasmonic acid (methyl ester derivative)	1
+C16325	trans-10-oxo-phytodienoic acid (methyl ester derivative)	-2
+C16325	cis-10-oxo-phytodienoic acid (methyl ester derivative)	-2
+C01226	trans-12-oxo-phytodienic acid (methyl ester derivative)	1
+C01226	cis-12-oxo-phytodienic acid (methyl ester derivative)	1
+	cis-10-oxo-phytoenoic acid (methyl ester derivative)	1
+	trans-10-oxo-phytoenoic acid (methyl ester derivative)	-2
+C00805	salicylic acid (SA)	1
+C00805	salicylic acid (methyl ester derivative)	1
+C10438	cinnamic acid  (methyl ester derivative)	1
+C22011	Zealexin A1 (methyl ester derivative)	1
+C22011	Zealexin B1 (methyl ester derivative)	-2
+C09629;C09666	beta-caryophyllene + beta-farnesene (co-chromatogaph)	1
+C06082	abscisic acid (ABA)	-1
+	241 [M+H]+ (#1, methyl ester derivative)	-1
+	241 [M+H]+ (#3, methyl ester derivative)	1
+	239 [M+H]+ (#1, methyl ester derivative)	1
+	239 [M+H]+ (#2, methyl ester derivative)	1
