@@ -1,7 +1,18 @@
 ---
-title: "CS1: HeLa cell cycling"
-output: html_document
+title: "Case Study 1: HeLa Cell Cycling"
+author: 
+- name:  "Antoine Bodein"
+  affiliation: "CHU de Québec Research Center, Université Laval, Molecular Medicine department, Québec, QC, Canada"
+  email: "antoine.bodein.1@ulaval.ca"
+output: 
+  BiocStyle::html_document
+  
+
+bibliography: ["mybib.bib"]
+biblio-style: apalike
+link-citations: true
 ---
+
 
 ```{r, echo = F}
 knitr::opts_chunk$set(cache = TRUE, message = FALSE, warning = FALSE)
