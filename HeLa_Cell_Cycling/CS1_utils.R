@@ -303,3 +303,46 @@ mechanisms_annot <- function(graph, seed_name){
         left_join(va.all) %>%
         mutate(seed  = seed_name)
 }
+
+in_between <- function(graph, seed, k = 10){
+    seed <- seed[seed %in% V(graph)$name]
+    if(is_empty(seed)){
+        return(NULL)
+    }
+    network <- extract_component(graph, seed)[[1]]
+    
+    MultiplexObject <- RandomWalkRestartMH::create.multiplex(network, Layers_Name = c("component"))
+    AdjMatrix <- compute.adjacency.matrix(MultiplexObject)
+    AdjMatrixNorm <- normalize.multiplex.adjacency(AdjMatrix)   
+    
+    
+    RWR_Results <- Random.Walk.Restart.Multiplex(AdjMatrixNorm, MultiplexObject,seed)
+    TopResults  <- create.multiplexNetwork.topResults(RWR_Results,MultiplexObject,k=k)
+    return(TopResults)
+}
+
+.merge_res_het <- function(RES_RWR_het, i){
+    # print(RES_RWR_het$Multiplex_Seed_Nodes)
+    first_result <- RES_RWR_het$RWRMH_Results_MultiplexNodes #%>%
+    # left_join(va.all, by = c("NodeNames"= "name")) 
+    second_result <- RES_RWR_het$RWRMH_Results_SecondNetNodes %>%
+        # left_join(va.all, by = c("SecondNet_node"= "name")) %>%
+        dplyr::rename(NodeNames = SecondNet_node)
+    rbind(first_result, second_result) %>% 
+        mutate(position = order(Score, decreasing = TRUE)) %>%
+        #filter(type %in% c("go_term")) %>%
+        filter(str_detect(NodeNames, "GO:")) %>%
+        mutate(composition = i)
+}
+
+filtre_res_het <- function(RES_RWR_het){
+    if(is.null(RES_RWR_het) || is(RES_RWR_het, "try-error")){
+        tmp <- list("NodeNames" = character(), "Score" = numeric(), position = integer(), composition = integer()) %>% as.data.frame(stringsAsFactor = FALSE) %>% na.omit()
+        return(tmp)
+    } else {
+        tmp <- imap_dfr(RES_RWR_het, ~.merge_res_het(.x, .y)) %>% 
+            dplyr::top_n(wt = position, n = -1) %>%
+            dplyr::top_n(wt = Score, n = 1)
+        return(tmp)
+    }
+}

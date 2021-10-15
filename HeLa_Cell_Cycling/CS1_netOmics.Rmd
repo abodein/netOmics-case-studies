@@ -13,7 +13,6 @@ biblio-style: apalike
 link-citations: true
 ---
 
-
 ```{r, echo = F}
 knitr::opts_chunk$set(cache = TRUE, message = FALSE, warning = FALSE)
 dir.create("./figure")
@@ -39,38 +38,53 @@ source("./CS1_utils.R")
 
 # Preprocessing
 
+We get raw data from [@aviner2015uncovering].
+
+Multi-omics data is composed of:
+
+- mRNA
+- Translation Data (iBAQ and LFQ normalisation)
+- Proteomics  (iBAQ and LFQ normalisation)
+
+For Translation and Proteomics, we selected iBAQ normalisation.
+
 ```{r preprocessing_1}
 all_data <- openxlsx::read.xlsx("data/pgen.1005554.s012.xlsx", startRow = 2)
 
-conv <- AnnotationDbi::select(org.Hs.eg.db, keytype = "UNIPROT", keys = all_data$Leading.Uniprot.IDs, 
-               columns = c("SYMBOL")) %>% 
-    unique %>% na.omit
-# from uniprot retriver
+# ID conversion from uniprot retriver
 conv <- read_tsv("./data/uniprot_mapping.tab") %>% unique
 
-type <- c("Translation.(LFQ)", "Translation.(iBAQ)", "Protein.(iBAQ)", "Protein.(LFQ)", "mRNA")
-DATA <- purrr::map(type, ~{all_data %>% dplyr::select(Leading.Uniprot.IDs, contains(.x))}) %>%
-    purrr::map(~ .x %>% as_tibble %>% column_to_rownames("Leading.Uniprot.IDs") %>% t %>% as.data.frame(stringsAsFactor = FALSE))
+type <- c("Translation.(LFQ)", "Translation.(iBAQ)", "Protein.(iBAQ)", 
+          "Protein.(LFQ)", "mRNA")
+DATA <- purrr::map(type, ~{all_data %>% 
+        dplyr::select(Leading.Uniprot.IDs, contains(.x))}) %>%
+    purrr::map(~ .x %>% as_tibble %>% 
+                   column_to_rownames("Leading.Uniprot.IDs") %>% t 
+               %>% as.data.frame(stringsAsFactor = FALSE))
 names(DATA) <- type
 
+DATA <- lapply(DATA, 
+               function(x) `rownames<-`(x,rownames(x) %>% str_remove(".*\\.")))
 
-lapply(DATA, dim)
+mRNA <- DATA$mRNA %>% t %>% as.data.frame %>% na.omit() %>% 
+    t %>% as.data.frame()
 
-lapply(DATA, rownames)
-DATA <- lapply(DATA, function(x) `rownames<-`(x,rownames(x) %>% str_remove(".*\\.")))
+trans <- lapply(DATA$`Translation.(iBAQ)`, function(x) 
+    as.character(x) %>% as.numeric) %>% 
+    as.data.frame(row.names =  rownames(DATA$`Translation.(iBAQ)`)) %>%  
+    t %>% as.data.frame %>% na.omit() %>% t %>% as.data.frame()
 
-mRNA <- DATA$mRNA %>% t %>% as.data.frame %>% na.omit() %>% t %>% as.data.frame()
-trans <- lapply(DATA$`Translation.(iBAQ)`, function(x) as.character(x) %>% as.numeric) %>% as.data.frame(row.names =  rownames(DATA$`Translation.(iBAQ)`)) %>%  t %>% as.data.frame %>% na.omit() %>% t %>% as.data.frame()
-protein <- lapply(DATA$`Protein.(iBAQ)`, function(x) as.character(x) %>% as.numeric) %>% as.data.frame(row.names =  rownames(DATA$`Protein.(iBAQ)`)) %>%  t %>% as.data.frame %>% na.omit() %>% t %>% as.data.frame()
+protein <- lapply(DATA$`Protein.(iBAQ)`, function(x) 
+    as.character(x) %>% as.numeric) %>% 
+    as.data.frame(row.names =  rownames(DATA$`Protein.(iBAQ)`)) %>%  
+    t %>% as.data.frame %>% na.omit() %>% t %>% as.data.frame()
 
-all(rownames(mRNA) == rownames(trans))
-all(rownames(mRNA) == rownames(protein))
+save(mRNA, trans, protein, file = "./result/norm_data.rda")
+```
 
-
-hist(t(mRNA))  # RMA = background correction + log2 transform
-hist(t(trans))
-hist(t(protein))
-
+We display the coefficient of variation for each omic to adjust the fold-change
+filtering step.
+```{r preprocessing_1.2}
 tmp_data = list("mRNA" = mRNA, "Translation" = trans, "Protein" = protein) %>%
 imap_dfr( ~{
     .x %>% rownames_to_column("sample") %>% 
@@ -82,13 +96,19 @@ ggplot(tmp_data, aes(x=value, fill=Omics)) +
     scale_fill_manual(values = mixOmics::color.mixo(1:3)) +
     theme_bw() +
     ggtitle("Platform-specific dynamic range") + xlab("Expression") + ylab("Counts")
-
-save(mRNA, trans, protein, file = "./norm_data.rda")
 ```
+The filtering step, threshold:
 
+- mRNA: log(2)
+- trans: log(3)
+- proteins: log(3)
 ```{r preprocessing_2}
-mRNA.fc <- remove.fold.change(mRNA, log(2),hist.title = "mRNA FC log 2", plot = TRUE)
-mRNA.fc <- mRNA.fc %>% rownames_to_column("sample") %>% gather(molecule, value, -sample) %>%
+mRNA.fc <- remove.fold.change(mRNA, log(2), 
+                              hist.title = "mRNA FC log 2", plot = TRUE)
+
+# Uniprot ID conversion to gene SYMBOL
+mRNA.fc <- mRNA.fc %>% rownames_to_column("sample") %>% 
+    gather(molecule, value, -sample) %>%
     left_join(conv, by = c("molecule"="UNIPROT")) %>% na.omit %>%
     dplyr::select(sample, SYMBOL, value) %>%
     group_by(sample, SYMBOL) %>%
@@ -96,25 +116,34 @@ mRNA.fc <- mRNA.fc %>% rownames_to_column("sample") %>% gather(molecule, value, 
     spread(SYMBOL, value) %>%
     column_to_rownames("sample")
 
-trans.fc <- remove.fold.change(trans, log(3),hist.title = "trans FC log 2", plot = TRUE)
-trans.fc <- trans.fc %>% rownames_to_column("sample") %>% gather(molecule, value, -sample) %>%
+trans.fc <- remove.fold.change(trans, log(3),
+                               hist.title = "trans FC log 3", plot = TRUE)
+trans.fc <- trans.fc %>% rownames_to_column("sample") %>% 
+    gather(molecule, value, -sample) %>%
     filter(molecule %in% conv$UNIPROT) %>% 
     dplyr::select(sample, molecule, value) %>% spread(molecule, value) %>%
     column_to_rownames("sample")
 
-prot.fc <- remove.fold.change(protein, log(3),hist.title = "prot FC log 2", plot = TRUE)
-prot.fc <- prot.fc %>% rownames_to_column("sample") %>% gather(molecule, value, -sample) %>%
+prot.fc <- remove.fold.change(protein, log(3), 
+                              hist.title = "prot FC log 3", plot = TRUE)
+prot.fc <- prot.fc %>% rownames_to_column("sample") %>% 
+    gather(molecule, value, -sample) %>%
     filter(molecule %in% conv$UNIPROT) %>% 
-    dplyr::select(sample, molecule, value) %>% spread(molecule, value) %>%
+    dplyr::select(sample, molecule, value) %>% 
+    spread(molecule, value) %>%
 column_to_rownames("sample")
 
 colnames(mRNA.fc) <- paste0("mRNA_", colnames(mRNA.fc))
 colnames(trans.fc) <- paste0("trans_", colnames(trans.fc))
 colnames(prot.fc) <- paste0("prot_", colnames(prot.fc))
+```
 
-# modelling
+
+```{r preprocessing_3}
+# modeling
 # median value
-mRNA.fc %>% rownames_to_column("sample") %>% mutate(group = sample %>% str_remove("_.*")) %>%
+mRNA.fc %>% rownames_to_column("sample") %>% 
+    mutate(group = sample %>% str_remove("_.*")) %>%
     gather(feature, value, -c(sample, group)) %>% 
     group_by(group, feature) %>%
     summarise(Value = median(value)) %>%
@@ -147,56 +176,73 @@ prot.fc %>% rownames_to_column("sample") %>% mutate(group = sample %>% str_remov
 prot.modelled <- prot.modelled[c("G1", "S", "G2/M"),]
 
 
-save(mRNA.fc, prot.fc, trans.fc, mRNA.modelled, trans.modelled, prot.modelled, file = "./modelled_data.rda")
+save(mRNA.fc, prot.fc, trans.fc, mRNA.modelled, trans.modelled, prot.modelled, file = "./result/modelled_data.rda")
 ```
 
 # Modelling
+
+Because there were only 3 timepoints (3 replicates), we tested 2 different way 
+of modelling (median and LMMS).
+
 ```{r modelling_1}
-time <- rownames(mRNA.fc) %>% str_remove("_.*") %>% factor(levels = c("G1","S","G2/M")) %>% as.numeric
+time <- rownames(mRNA.fc) %>% str_remove("_.*") %>% 
+    factor(levels = c("G1","S","G2/M")) %>% as.numeric
 
 lmms.output <- lmms::lmmSpline(data = mRNA.fc, time = time,
                                sampleID = rownames(mRNA.fc), deri = FALSE,
-                               basis = "cubic p-spline", numCores = 4, timePredict = 1:3, 
+                               basis = "cubic p-spline", 
+                               numCores = 4, timePredict = 1:3, 
                                keepModels = TRUE)
 modelled.data <- t(slot(lmms.output, 'predSpline'))
 
 lmms.mRNA <- wrapper.lmms(mRNA.fc, time, sampleID = rownames(mRNA.fc))
 lmms.mRNA$summary
 mRNA.filter <- lmms.filter.lines(data = mRNA.fc, 
-                                lmms.obj = lmms.mRNA$pspline, time = time) %>% .$filtered
+                                lmms.obj = lmms.mRNA$pspline, time = time) %>% 
+    .$filtered
 
 lmms.trans <- wrapper.lmms(trans.fc, time, sampleID = rownames(trans.fc))
 lmms.trans$summary
 trans.filter <- lmms.filter.lines(data = trans.fc, 
-                                 lmms.obj = lmms.trans$pspline, time = time) %>% .$filtered
+                                 lmms.obj = lmms.trans$pspline, time = time) %>% 
+    .$filtered
 
 lmms.prot <- wrapper.lmms(prot.fc, time, sampleID = rownames(prot.fc))
 lmms.prot$summary
 prot.filter <- lmms.filter.lines(data = prot.fc, 
-                                  lmms.obj = lmms.prot$pspline, time = time) %>% .$filtered
+                                  lmms.obj = lmms.prot$pspline, time = time) %>% 
+    .$filtered
 
-# remove from fc 
+# remove from fc (filtering step) 
 mRNA.fc <- dplyr::select(mRNA.fc, colnames(mRNA.filter))
 trans.fc <- dplyr::select(trans.fc, colnames(trans.filter))
 prot.fc <- dplyr::select(prot.fc, colnames(prot.filter))
 
-save(mRNA.fc, prot.fc, trans.fc, mRNA.filter, trans.filter, prot.filter, file = "./data_filtered.rda")
+save(mRNA.fc, prot.fc, trans.fc, mRNA.filter, trans.filter, prot.filter, 
+     file = "./result/data_filtered.rda")
 ```
 
 # Clustering
+
+We tested 2 different clustering:
+
+- timeOmics (with a block PLS).
+- sign of variation (Up Down) as described in the paper
+
+We tested the 2 clustering approaches on the 2 modeling approaches.
+
+First with timeOmics:
 ```{r timeOmics_1}
-data.mean <- list("mRNA" = mRNA.modelled, "trans" = trans.modelled, "prot"=prot.modelled)
+data.mean <- list("mRNA" = mRNA.modelled, 
+                  "trans" = trans.modelled, 
+                  "prot"=prot.modelled)
 
 cb.modelled <- do.call("cbind", data.mean)
 colnames(cb.modelled) <- lapply(data.mean, colnames) %>% unlist
 
-block.res <- block.pls(data.mean, ncomp = 1, indY = 1, scale = FALSE, mode = "canonical")
-quick_silhouette(cb.modelled, getCluster(block.res))
-
-block.res <- block.pls(data.mean, ncomp = 3, indY = 1, scale = FALSE, mode = "canonical")
-quick_silhouette(cb.modelled, getCluster(block.res))
-
-block.res <- block.pls(data.mean, ncomp = 2, indY = 1, scale = FALSE, mode = "canonical")
+# 2 components gave the best clustering results (silhouette coefficient)
+block.res <- block.pls(data.mean, ncomp = 2, 
+                       indY = 1, scale = FALSE, mode = "canonical")
 quick_silhouette(cb.modelled, getCluster(block.res))
 
 plotLong(block.res, time = c(1,2,3), legend = TRUE)
@@ -205,24 +251,22 @@ cluster.info <- getCluster(block.res)
 summary_cluster(cluster.info)
 
 
-# cb.modelled %>% t %>% as.data.frame() %>% rownames_to_column("molecule") %>% 
-#     left_join(cluster.info)
-
 to.cluster.info.modelled <- getCluster(block.res)
 cluster_homo_block(to.cluster.info.modelled)
 summary_cluster(to.cluster.info.modelled)
 quick_silhouette(cb.modelled, to.cluster.info.modelled)
 
 #2 filtered data
-data.lmms <- list("mRNA" = mRNA.filter, "trans" = trans.filter, "prot"=prot.filter)
+data.lmms <- list("mRNA" = mRNA.filter, 
+                  "trans" = trans.filter, 
+                  "prot"=prot.filter)
+
 lapply(data.lmms, dim)
 cb.lmms <- do.call("cbind", data.lmms)
 colnames(cb.lmms) <- lapply(data.lmms, colnames) %>% unlist
 
-block.res <- block.pls(data.lmms, ncomp = 2, indY = 1, scale = FALSE, mode = "canonical")
-plotLong(block.res, legend = TRUE)
-
-block.res <- block.pls(data.lmms, ncomp = 3, indY = 1, scale = FALSE, mode = "canonical")
+block.res <- block.pls(data.lmms, ncomp = 3, indY = 1, 
+                       scale = FALSE, mode = "canonical")
 quick_silhouette(cb.lmms, getCluster(block.res))
 
 
@@ -230,9 +274,10 @@ to.cluster.info.lmms <- getCluster(block.res)
 cluster_homo_block(to.cluster.info.lmms)
 summary_cluster(to.cluster.info.lmms)
 quick_silhouette(cb.lmms, to.cluster.info.lmms)
+```
 
-
-   
+Second with the sign of variation:
+```{r timeOmics_1-2}
 ######################################################
 # cluster up/down
 ######################################################
@@ -256,17 +301,22 @@ sign_to_updown <- function(zz){
     for(i in 1:length(zz)){
       # print(z)
         z = zz[i] %>% str_split( "_") %>% unlist()
-        r[i] <- data.frame("val" = z) %>% mutate(conv = ifelse(val == 1, "Up", ifelse(val == -1, "Down", "0"))) %>%
+        r[i] <- data.frame("val" = z) %>% 
+            mutate(conv = ifelse(val == 1, "Up", 
+                                 ifelse(val == -1, "Down", "0"))) %>%
             pull(conv) %>% paste(collapse = "_")
     }
     return(r)
 }
     
 #1. modelled 
-cluster.info.updown.mean <- imap_dfr(data.mean, ~{up_down_cluster(.x) %>% mutate(block = .y)})
+cluster.info.updown.mean <- imap_dfr(data.mean, 
+                                     ~{up_down_cluster(.x) %>% 
+                                             mutate(block = .y)})
 
 # plot
-cb.modelled %>% scale %>% as.data.frame() %>% rownames_to_column("time") %>% gather(molecule, value, -time) %>%
+cb.modelled %>% scale %>% as.data.frame() %>% rownames_to_column("time") %>% 
+    gather(molecule, value, -time) %>%
     left_join(cluster.info.updown.mean) %>%
     mutate(time = factor(time, levels = c("G1","S", "G2/M")) %>% as.numeric()) %>%
     ggplot(aes(x = time, y = value, group =  molecule, col = block)) + 
@@ -279,13 +329,14 @@ summary_cluster(cluster.info.updown.mean)
 quick_silhouette(cb.modelled, cluster.info.updown.mean)
 
 #2. lmms
-cluster.info.updown.lmms <- imap_dfr(data.lmms, ~{up_down_cluster(.x) %>% mutate(block = .y)})
+cluster.info.updown.lmms <- imap_dfr(data.lmms, ~{up_down_cluster(.x) %>% 
+        mutate(block = .y)})
 
 # plot
 png("./figure/CS1_clusters.png", height =  1500, width = 3000, res = 300)
-cb.lmms %>% scale %>% as.data.frame() %>% rownames_to_column("time") %>% gather(molecule, value, -time) %>%
+cb.lmms %>% scale %>% as.data.frame() %>% rownames_to_column("time") %>% 
+    gather(molecule, value, -time) %>%
   left_join(cluster.info.updown.lmms) %>% 
-  # mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Down", "Up_Up", "Down_Down"))) %>%
   mutate(cluster = case_when(
     cluster == "Down_Up" ~ "Cluster 1", 
     cluster == "Up_Up" ~ "Cluster 2",
@@ -305,7 +356,8 @@ cb.lmms %>% scale %>% as.data.frame() %>% rownames_to_column("time") %>% gather(
   theme_bw() +
   #theme(legend.position = "bottom") +
   scale_x_continuous(breaks = c(1,2,3), labels = c("G1", "S", "G2/M")) +
-  ggtitle("HeLa cell clycling data clusters, scale = TRUE") + xlab("Time") + ylab("Scaled expression value")
+  ggtitle("HeLa cell clycling data clusters, scale = TRUE") + xlab("Time") + 
+    ylab("Scaled expression value")
 dev.off()
 
 cluster_homo_block(cluster.info.updown.lmms)
@@ -313,16 +365,25 @@ summary_cluster(cluster.info.updown.lmms) %>% rowSums(.)
 quick_silhouette(cb.lmms, cluster.info.updown.lmms)
 
 cluster.info <- cluster.info.updown.lmms
-tmp <- summary_cluster(cluster.info.updown.lmms) %>% cbind(max = rowSums(., na.rm = TRUE)) %>% arrange(desc(max)) %>%
+tmp <- summary_cluster(cluster.info.updown.lmms) %>% 
+    cbind(max = rowSums(., na.rm = TRUE)) %>% arrange(desc(max)) %>%
   dplyr::select(mRNA, trans, prot)
 tmp[is.na(tmp)] <- 0
 # in %
-map2(tmp, colSums(tmp),~.x/.y) %>% as.data.frame() %>% `row.names<-`(rownames(tmp))
-rowSums(tmp)
-save(cluster.info, file = "./luster_info.rda")
+map2(tmp, colSums(tmp),~.x/.y) %>% as.data.frame() %>% 
+    `row.names<-`(rownames(tmp))
+save(cluster.info, file = "./result/luster_info.rda")
 ```
+We then selected the best modelled/clustering approaches with the silhouette coefficient.
 
-# Gene graph
+# Network(s) building
+
+In this section we build the networks.
+
+## Gene graph
+
+For the Gene network, we used ARACNe [@aracne] algorithm (`minet` R package)
+We build cluster specific networks and a global network (ALL).
 
 ```{r grn_1}
 mim <- minet::build.mim(mRNA.fc)
@@ -331,14 +392,17 @@ GRN.adg <- aracne(mim)
 GRN <- graph_from_adjacency_matrix(GRN.adg, mode = "undirected")
 plot(GRN, vertex.label = NA, vertex.size = 4)
 
-GRN.cluster <- cluster.info %>% filter(block == "mRNA") %>% split(.$cluster) %>%
-    lapply(function(x) dplyr::select(mRNA.fc, intersect(colnames(mRNA.fc), x$molecule)) %>%
+GRN.cluster <- cluster.info %>% filter(block == "mRNA") %>% 
+    split(.$cluster) %>%
+    lapply(function(x) 
+        dplyr::select(mRNA.fc, intersect(colnames(mRNA.fc), x$molecule)) %>%
                minet::build.mim() %>% aracne %>%
                graph_from_adjacency_matrix(mode = "undirected"))
 
 par(mfrow = c(2,2))
 imap(GRN.cluster, ~{
-  plot(.x, main = .y,vertex.label = NA, vertex.size = 4, vertex.color = "lightblue")
+  plot(.x, main = .y,vertex.label = NA, vertex.size = 4, 
+       vertex.color = "lightblue")
 })
 par(mfrow = c(1,1))
 
@@ -346,45 +410,57 @@ get_stats_graph(GRN) %>% as.data.frame() %>% mutate(cluster = "all")
 imap_dfr(GRN.cluster, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y))
 
 GRN.cluster[["all"]] = GRN
-imap_dfr(GRN.cluster, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y)) %>% 
-  mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+imap_dfr(GRN.cluster, ~get_stats_graph(.x) %>% as.data.frame %>% 
+             mutate(cluster = .y)) %>% 
+  mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", 
+                                              "Down_Down", "Up_Down", "all"))) %>%
   arrange(cluster)
 
 for(i in names(GRN.cluster)){
-    vertex_attr(graph = GRN.cluster[[i]])$name <- vertex_attr(graph = GRN.cluster[[i]])$name %>%
-        str_remove("mRNA_")
-    vertex_attr(graph = GRN.cluster[[i]])$type <- rep("Gene", length(vertex_attr(graph = GRN.cluster[[i]])$name)) 
+    vertex_attr(graph = GRN.cluster[[i]])$name <- 
+        vertex_attr(graph = GRN.cluster[[i]])$name %>% str_remove("mRNA_")
+    vertex_attr(graph = GRN.cluster[[i]])$type <- 
+        rep("Gene", length(vertex_attr(graph = GRN.cluster[[i]])$name)) 
 }
 
-save(GRN.cluster, file = "./GRN.rda")
+save(GRN.cluster, file = "./result/GRN.rda")
 ```
 
-# prot graph
+## Protein graph
+
+We buid a PPI graph with BioGRID [@biogrid].
+We filtered the database with the molecules from the experiment.
+
+(This chunk is not evaluated because of the file size limit of github, only 
+the result was uploaded).
 
 ```{r prot_graph_1, eval=FALSE}
 # Proteins BIOGRID
 biogrid <- read_tsv("data/BIOGRID-ALL-3.5.187.tab3.txt")
-biogrid.filtered <- biogrid %>% dplyr::select("Official Symbol Interactor A", "Official Symbol Interactor B") %>% unique %>%
-    set_names(c("A", "B"))
+biogrid.filtered <- biogrid %>% 
+    dplyr::select("Official Symbol Interactor A", "Official Symbol Interactor B") %>% 
+    unique %>% set_names(c("A", "B"))
 
 #write_csv(x = as.data.frame(c(biogrid.filtered$A, biogrid.filtered$B) %>% unique), path = "./paper/uniprot_biogrid_mapping.csv", col_names = FALSE)
 # use of annotationDbi
-conv.biogrid <- AnnotationDbi::select(org.Hs.eg.db, keytype = "SYMBOL", keys = c(biogrid.filtered$A, biogrid.filtered$B), 
+conv.biogrid <- AnnotationDbi::select(org.Hs.eg.db, keytype = "SYMBOL", 
+                                      keys = c(biogrid.filtered$A, biogrid.filtered$B), 
                    columns = c("UNIPROT")) %>%
     unique %>% na.omit
 
-biogrid.filtered <- biogrid.filtered %>% left_join(conv.biogrid, by = c("A"="SYMBOL")) %>% dplyr::rename(A.UNIPROT = UNIPROT) %>%
+biogrid.filtered <- biogrid.filtered %>% 
+    left_join(conv.biogrid, by = c("A"="SYMBOL")) %>% dplyr::rename(A.UNIPROT = UNIPROT) %>%
     left_join(conv.biogrid, by = c("B"="SYMBOL")) %>% dplyr::rename(B.UNIPROT = UNIPROT) %>%
     dplyr::select(A.UNIPROT, B.UNIPROT) %>%
     na.omit() %>% unique
 save(biogrid.filtered, file = "data/BIOGRID.rda")
-  ```
+```
 
-```{r, cache=TRUE}
+```{r prot_graph_1-2, cache=TRUE}
 load("data/BIOGRID.rda")
 ```
 
-
+From biogrid we extracted all links between measured molecules and first degree neighbors (PPI_ego).
 ```{r prot_graph_2}
 BIOGRID <- graph_from_data_frame(biogrid.filtered, directed = FALSE) %>% simplify()
 
@@ -398,8 +474,11 @@ PPI_EGO <- subgraph(BIOGRID, v = V(PPI_EGO)$name)
 vcount(PPI_EGO)
 
 PPI <- subgraph(BIOGRID, v = prot.nodes[prot.nodes %in% V(BIOGRID)$name])
-
 ```
+
+We build PPI subgraph for each cluster.
+Based on the protein coding gene information (gene -> proteins),
+we merged Gene networks and PPI networks (cluster-specific sub-networks and global network).
 
 ```{r prot_graph_3}
 prot.cluster <- cluster.info %>% filter(block == "prot") %>% 
@@ -410,20 +489,24 @@ PPI_cluster <- lapply(prot.cluster, function(x){
     # subgraph(PPI,intersect(V(PPI)$name, x$SYMBOL))
     subgraph(PPI,intersect(V(PPI)$name, x$molecule))
 })
-PPI_cluster[["all"]] <-  subgraph(PPI, v = intersect(lapply(prot.cluster, function(x) x$molecule) %>% unlist(), V(PPI)$name))
+PPI_cluster[["all"]] <-  subgraph(PPI, v = intersect(
+    lapply(prot.cluster, function(x) x$molecule) %>% unlist(), V(PPI)$name))
 
 imap_dfr(PPI_cluster, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = .y)}) %>%
     dplyr::select(name, cluster) %>% 
     #unique %>%
     group_by(cluster) %>%
     summarise(N = n()) %>%
-    mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+    mutate(cluster = factor(cluster, 
+                            levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
     arrange(cluster) %>%
     column_to_rownames("cluster")
 
 # stats
-imap_dfr(PPI_cluster, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y)) %>% 
-    mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+imap_dfr(PPI_cluster, ~get_stats_graph(.x) %>% 
+             as.data.frame %>% mutate(cluster = .y)) %>% 
+    mutate(cluster = factor(cluster, 
+                            levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
     arrange(cluster)
 
 detach("package:igraph", unload=TRUE)
@@ -437,22 +520,31 @@ PPI_cluster.ego <- lapply(prot.cluster, function(x){
 })
 PPI_cluster.ego[["all"]] <- PPI_EGO
 
-imap_dfr(PPI_cluster.ego, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y))%>% 
-    mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+imap_dfr(PPI_cluster.ego, ~get_stats_graph(.x) %>% 
+             as.data.frame %>% mutate(cluster = .y))%>% 
+    mutate(cluster = factor(cluster, 
+                            levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
     arrange(cluster)
 
-imap_dfr(PPI_cluster.ego, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = .y) %>%
-        mutate(type = ifelse(name %in% (do.call("rbind", prot.cluster) %>% filter(cluster == .y)  %>% pull(molecule)), "prot", "ego"))}) %>%
+imap_dfr(PPI_cluster.ego, ~{vertex_attr(.x) %>% 
+        as.data.frame() %>% mutate(cluster = .y) %>%
+        mutate(type = ifelse(name %in% (do.call("rbind", prot.cluster) %>% 
+                                            filter(cluster == .y)  %>% 
+                                            pull(molecule)), "prot", "ego"))}) %>%
     dplyr::select(name, cluster, type) %>%
     #unique %>%
     group_by(cluster, type) %>%
     summarise(N = n()) %>%
     spread(type, N) %>%
-    mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+    mutate(cluster = factor(cluster, 
+                            levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
     arrange(cluster) %>%
     column_to_rownames("cluster")
 ```
 
+We also include the TF (protein) -> gene relationship from TF2DNA and Trrust.
+
+(Again, this R chunk is not evaluated because of the size of the database files).
 ```{r tfome, eval=FALSE}
 TFome <- read_tsv("~/work/WORK:analysis/human_tf2DNA/TF2DNA_exp_uniq.txt", col_names = F)
 names(TFome) <- c("TF","Target")
@@ -476,14 +568,11 @@ TFome.filtered <- TFome %>% left_join(conv.ego, by = c("TF"="SYMBOL")) %>% na.om
     unique %>%
     set_names(c("Prot", "Gene")) %>%
     mutate(from = Prot, to = Gene)
-    # mutate(interaction_type = "TF")
 
 coding.filtered <- conv.ego %>% set_names(c("Prot", "Gene")) %>%
     mutate(from = Gene, to = Prot)
-    #%>%
-    #mutate(interaction_type = "coding")
 
-link_gene_prot = rbind(TFome.filtered, coding.filtered) #%>% graph_from_data_frame(directed = FALSE)
+link_gene_prot = rbind(TFome.filtered, coding.filtered) 
 
 merge_GRN_PPI <- function(GRN, PPI, interaction.df){
     # filter interaction
@@ -516,12 +605,16 @@ for(i in names(GRN.cluster)){
     
 }
 
+save(TFome.filtered, file = "./data/TFome_filtered.rda")
 save(GRN_PPI, GRN_PPI.ego, PPI_cluster.ego, PPI_cluster, file = "./result/GRN_PPI.rda")
 ```
 
-```{r}
+```{r tfome_1-2}
+load("./data/TFome_filtered.rda")
 load("./result/GRN_PPI.rda")
 ```
+
+We generate some network statistics.
 
 ```{r tfome2}
 imap_dfr(PPI_cluster, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y))
@@ -558,15 +651,18 @@ imap_dfr(GRN_PPI.ego, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster =
     #unique %>%
     group_by(type, cluster) %>%
     summarise(N = n()) %>% spread(type, N) %>%
-    mutate(cluster = factor(cluster, levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
+    mutate(cluster = factor(cluster, 
+                            levels = c("Down_Up", "Up_Up", "Down_Down", "Up_Down", "all"))) %>%
     arrange(cluster) %>%
     column_to_rownames("cluster")
 ```
 
-# ORA
+## ORA
+
+We applied a GO terms over representation analysis for each layer.
 ```{r ora1}
-load(".//luster_info.rda")
-load(".//GRN_PPI.rda")
+load("./result/luster_info.rda")
+load("./result/GRN_PPI.rda")
 
 
 list.conv <- cluster.info %>% filter(block %in% c("prot", "trans")) %>% pull(molecule) %>% str_remove('trans_') %>% str_remove("prot_") %>% unique()
@@ -609,6 +705,7 @@ enrich.prot.ext[["all"]] <- gprofiler2::gost(query = (cluster.prot.ext %>% lappl
 
 ```
 
+We combined the GO terms pvalue to identified shared terms between omic layers.
 ```{r ora2}
 enr1<- enrich.mRNA$all$result
 enr2<- enrich.prot$all$result
@@ -723,18 +820,18 @@ enrich.df.write[["comb.p.value"]] <- imap_dfr(enrich.comb.mRNA.prot.trans, ~{.x 
     cluster == "all" ~ "all"))
     })
 
-openxlsx::write.xlsx(x = enrich.df.write, file = "./table_hela_ora.xlsx")
+#openxlsx::write.xlsx(x = enrich.df.write, file = "./result/table_hela_ora.xlsx")
 ```
 
-Connection 
+We used the GO -> Gene/Prot relationship to add this GO term layer to the networks.
 ```{r go_1}
 go.info <- map_dfr(enrich.df$term_id %>% unique, ~get_go_info(.x))
 
 enrich.df <- enrich.df %>% left_join(go.info, by = c("term_id"="name"))
-save(enrich.df, file = "./enrich_all_filtered.rda")
+save(enrich.df, file = "./result/enrich_all_filtered.rda")
 ```
 ```{r go_2}
-load("./enrich_all_filtered.rda")
+load("./result/enrich_all_filtered.rda")
 
 enrich.df %>% mutate(type = ifelse(mode == "raw", type, "Ext.")) %>%
     dplyr::select(term_id, source, type) %>% unique %>%
@@ -752,19 +849,6 @@ enrich.df %>% filter(mode == "raw") %>%
     
     
 tmp.go_terms <- enrich.df$term_id %>% map_df(~get_go_info(.x))
-enrich.df %>% dplyr::select(mode, term_id, source, cluster, p_value) %>%
-    filter(mode == "raw") %>% arrange(p_value) %>%
-    left_join(tmp.go_terms, by = c('term_id' = 'name')) %>%
-    filter(source %in% c("GO:BP", "GO:BP")) %>%
-    dplyr::select(cluster, lab, description) %>% unique
-
-enrich.df %>% dplyr::select(mode, term_id, source, cluster, p_value) %>%
-    filter(mode == "raw") %>% arrange(p_value) %>%
-    left_join(tmp.go_terms, by = c('term_id' = 'name')) %>%
-    filter(source %in% c("GO:BP", "GO:BP")) %>%
-    dplyr::select(cluster, source, lab, description) %>% unique %>%
-    filter(source == "GO:MF")
-
 
 # cluster specific and only visible in cluster (no global)
 enrich.df %>% filter(mode == "raw") %>%
@@ -778,7 +862,7 @@ enrich.df %>% filter(mode == "raw") %>%
 
 #tmp.unique.cluster %>% filter(cluster != "all") %>% dplyr::select(cluster, description.x, lab.x) %>% filter(description.x %>% str_detect("BP"))
 
-write_csv(tmp.unique.cluster, path = "./cs1_RWR_unique.csv")
+write_csv(tmp.unique.cluster, path = "./result/cs1_RWR_unique.csv")
 ```
 
 ```{r go3}
@@ -794,7 +878,7 @@ ggplot(aes(x = -log10(p_value), fill = mode)) +
     ylab("Number of GO terms")
 dev.off()
 
-png("./figure//CS1_goterm_enr_2.png", height =  1500, width = 2000, res = 300)
+#png("./figure//CS1_goterm_enr_2.png", height =  1500, width = 2000, res = 300)
 enrich.df %>% mutate(approach = ifelse(approach == "by_cluster", "By_Cluster", "Global")) %>%
     mutate(mode = ifelse(mode == "raw", "Raw", "Extended") %>% factor(levels = c("Raw", "Extended"))) %>%
     dplyr::select(term_id, source, type, mode, approach) %>% unique %>%
@@ -816,7 +900,7 @@ enrich.df %>% mutate(approach = ifelse(approach == "by_cluster", "By_Cluster", "
                       x = "Clustering approach", 
                       y = "Number of unique GO terms") +
     scale_fill_manual(values = c("#c9daf8", "#efefef", "#fce5cd"))
-dev.off()
+#dev.off()
 
 set.count.raw <-  enrich.df %>% filter(mode == "raw", cluster != "all") %>% split(.$cluster) %>% lapply(function(x) pull(x, term_id))
 set.count.raw <- set.count.raw[c("Down_Up", "Up_Up", "Down_Down", "Up_Down")] 
@@ -837,9 +921,9 @@ top_ha = HeatmapAnnotation(
     "Extended" = anno_barplot(comb_size(set.count.ext), gp = gpar(fill = "black"), height = unit(2, "cm")),
     annotation_name_side = "left", annotation_name_rot = 0)
 
-png("./figure//CS1_goterm_enr_3.png", height =  1300, width = 4000, res = 300)
+#png("./figure//CS1_goterm_enr_3.png", height =  1300, width = 4000, res = 300)
 UpSet(set.count.raw, top_annotation = top_ha,heigh = unit(5, "cm"), row_title = "Clusters")
-dev.off()
+#dev.off()
 ```
 
 ```{r go4}
@@ -852,7 +936,7 @@ all_mol <- c(lapply(cluster.mRNA, function(x){x$molecule}) %>% base::unlist() %>
 length(all_mol)
 
 goterm_map <- gprofiler2::gconvert(query = all_mol, organism = "hsapiens", target = "GO") 
-save(goterm_map, file = "./goterm_map.rda")
+save(goterm_map, file = "./result/goterm_map.rda")
 
 
 signif_goterm_map <- goterm_map %>% filter(target %in% enrich.df$term_id) %>%
@@ -896,44 +980,15 @@ unknown_seeds_nodes <- c(do.call("rbind", cluster.mRNA) %>% mutate(seed = molecu
                          ) %>% unique
 
 
-save(unknown_seeds, unknown_seeds_nodes, file ="./unknown_seeds.rda")
+save(unknown_seeds, unknown_seeds_nodes, file ="./result/unknown_seeds.rda")
 ```
 
+## Metabolite
 
-```{r}
-load("./GO_graphs.rda")
+Finaly, we included a metabolite layer from Kegg [@kegg] with Gene <-> KO and KO <-> GO interactions.
 
-vertex_attr(GOCC_graph)$type <- rep("GO:CC", vcount(GOCC_graph))
-vertex_attr(GOBP_graph)$type <- rep("GO:BP", vcount(GOBP_graph))
-vertex_attr(GOMF_graph)$type <- rep("GO:MF", vcount(GOMF_graph))
-
-FINAL_GOBP <- add_go_term_annot(graph = GRN_PPI.ego$all, go.graph = as.undirected(GOBP_graph))
-FINAL_GOCC <- add_go_term_annot(graph = GRN_PPI.ego$all, go.graph = as.undirected(GOCC_graph))
-FINAL_GOMF <- add_go_term_annot(graph = GRN_PPI.ego$all, go.graph = as.undirected(GOMF_graph))
-
-FINAL_GOBP_short <- add_go_term_annot(graph = GRN_PPI$all, go.graph = as.undirected(GOBP_graph))
-FINAL_GOCC_short <- add_go_term_annot(graph = GRN_PPI$all, go.graph = as.undirected(GOCC_graph))
-FINAL_GOMF_short <- add_go_term_annot(graph = GRN_PPI$all, go.graph = as.undirected(GOMF_graph))
-
-
-
-tmp <- igraph::union(FINAL_GOBP, FINAL_GOCC)
-vertex_attr(tmp) <- vertex_attr(tmp) %>% as.data.frame(stringsAsFactors = FALSE) %>% 
-    mutate(type = ifelse(!is.na(type_1), type_1, type_2)) %>%
-    dplyr::select(-c(type_1,type_2)) %>% as.list()
-final_go_full <- igraph::union(tmp, FINAL_GOMF)
-vertex_attr(final_go_full) <- vertex_attr(final_go_full) %>% as.data.frame(stringsAsFactors = FALSE) %>% 
-    mutate(type = ifelse(!is.na(type_1), type_1, type_2)) %>%
-    dplyr::select(-c(type_1,type_2)) %>% as.list()
-
-save(GRN_PPI.ego.GO, final_go_full, FINAL_GOBP, FINAL_GOCC, FINAL_GOMF, FINAL_GOBP_short, FINAL_GOCC_short, FINAL_GOMF_short, file = "./GRN_PPI_GO.rda")
-
-```
-
-# Metabolite
-
-```{r metabolite_1}
-load("./reaction_mapformula_df.rda")
+```{r metabolite_1,eval=FALSE}
+load("./data/reaction_mapformula_df.rda")
 
 # kegg ko <-> rn <-> hsa
 ko_reaction.list <- read_tsv("~/work/KEGGBD/ko/ko_reaction.list", col_names = c("ko", "rn"))
@@ -956,13 +1011,13 @@ METAB.graph <- igraph::graph_from_data_frame(metab_uniprot %>% dplyr::select(p1,
 interaction_met_prot.df <- metab_uniprot %>% dplyr::select(UNIPROT,p1,p2) %>% gather(p, met, -UNIPROT) %>% dplyr::select(-p) %>% unique %>% na.omit()
 ```
 
-```{r metabolite_2}
+```{r metabolite_2, eval=FALSE}
 
 ################
 # Add metabo layer
 ################
 
-load(file = ".//GRN_PPI_GO.rda")
+load(file = ".//result/GRN_PPI_GO.rda")
 
 
 graph = GRN_PPI.ego.GO$all
@@ -984,7 +1039,7 @@ FULL_graph <- lapply(GRN_PPI.ego.GO, add_metabo_layer)
 #     unique %>%
 #     mutate(go = str_replace(go, "go:", "GO:"))
 #save(ko2go, file = "./ko2go.rda")
-load("./ko2go.rda")
+load("./data/ko2go.rda")
 
 #ko2go$cpd %in% (lapply(FULL_graph, function(x) V(x)$name) %>% unlist() %>% unname)
 graph <- FULL_graph$all
@@ -992,7 +1047,7 @@ graph <- FULL_graph$all
 
 
 FULL_graph <- lapply(FULL_graph, add_go_metabo_edges)
-save(FULL_graph, file = "./graph_w_metabo.rda")
+save(FULL_graph, file = "./result/graph_w_metabo.rda")
 
 
 imap_dfr(FULL_graph, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = .y)}) %>%
@@ -1005,8 +1060,9 @@ imap_dfr(FULL_graph, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = 
     column_to_rownames("cluster")
 ```
 
+and we cleaned the graph (remove duplicate links, correct layer names, ...)
 
-```{r cleaning}
+```{r cleaning,eval=FALSE}
 # list prot only
 prot_only <- lapply(PPI_cluster, function(x)V(x)$name) %>% unlist %>% unname
 prot_ego <- setdiff(lapply(PPI_cluster.ego, function(x)V(x)$name) %>% unlist %>% unname, prot_only)
@@ -1032,7 +1088,7 @@ FINAL_GO_ANNOT_short <- list("BP" = FINAL_GOBP_short,
                        "MF" = FINAL_GOMF_short)
 FINAL_GO_ANNOT_short <- purrr::map(FINAL_GO_ANNOT_short, ~reformate_graphs(graph = .x,cluster = "all" ))
 
-save(FINAL, FINAL_GO_ANNOT, FINAL_GO_ANNOT_short, file = './FINAL.rda')
+save(FINAL, FINAL_GO_ANNOT, FINAL_GO_ANNOT_short, file = './final/FINAL.rda')
 
 imap_dfr(FINAL, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = .y)}) %>%
     dplyr::select(type, name, cluster) %>% 
@@ -1046,10 +1102,12 @@ imap_dfr(FINAL, ~{vertex_attr(.x) %>% as.data.frame() %>% mutate(cluster = .y)})
 
 # Random Walk
 
-## mechanisms
+## RWR for Multi-omics mechanisms
+
 ```{r rw_1}
-load("unknown_seeds.rda")
-load("enrich_all_filtered.rda")
+load("./result/FINAL.rda")
+load("./result/unknown_seeds.rda")
+load("./result/enrich_all_filtered.rda")
 list_go <- enrich.df %>% filter(mode == "raw", source == "GO:BP") %>% pull(term_id) %>% unique
 list_go <- enrich.df  %>% pull(term_id) %>% unique
 va.all <- vertex_attr(FINAL$all) %>% as.data.frame()
@@ -1061,10 +1119,10 @@ set.seed(1)
 #     parallel::mclapply(list_go, function(go) {homo_network_RWR(graph, seed = go, k = 25)}, mc.cores = 20)}, 
 #     mc.cores = 4)
 # Sys.time()
-load("./RWR_res_mechanisms.rda")
+load("./result/RWR_res_mechanisms.rda")
 ```
 
-```{r rw2}
+```{r rw2,eval=FALSE}
 RWR_go_mechanisms <- lapply(RWR_go_mechanisms, function(x) `names<-`(x, list_go))
 graph <- RWR_go_mechanisms$all$`GO:0005515`
 length(RWR_go_mechanisms$all)  # nb go term tested
@@ -1073,10 +1131,10 @@ RWR_go_mechanisms_annot <- lapply(names(RWR_go_mechanisms), function(x){
     imap_dfr(RWR_go_mechanisms[[x]], ~{ mechanisms_annot(.x, .y)}) %>%
         mutate(CLUSTER = x)}) %>%
     do.call(what = "rbind")
-write.csv(RWR_go_mechanisms_annot, file = "./RWR_meca.csv")
+write.csv(RWR_go_mechanisms_annot, file = "./result/RWR_meca.csv")
 ```
 
-```{r rwr3}
+```{r rwr3, eval = FALSE}
 RWR_go_mechanisms_annot_tmp <- RWR_go_mechanisms_annot %>% 
     group_by(CLUSTER, seed, type) %>%
     summarise(N=n()) %>% spread(type, N) 
@@ -1144,7 +1202,7 @@ vertex_attr(plot.graph.tmp)<- vertex_attr(plot.graph.tmp) %>%
            size = ifelse(type %in% c("Prot.ego", "Metabolite"), 5,6), 
            size = ifelse(name == seed.plot, 8, size))
 
-png("./figure/cs1_rwr_meca.png", height =  3000, width = 3500, res = 300)
+#png("./figure/cs1_rwr_meca.png", height =  3000, width = 3500, res = 300)
 plot(plot.graph.tmp, layout=l)
 legend("bottomleft", 
        legend = c("SEED", "Genes", "Proteins", "Metabolites", "GO terms", "Ext. neighbours"),
@@ -1155,10 +1213,10 @@ legend("bottomleft",
        box.col="white"
 )
 title("Regulation of mitotic nuclear division")
-dev.off()
+#dev.off()
 ```
 
-```{r}
+```{r, eval = FALSE}
 ### PLOT FIGURE
 tmp_meca %>% filter(seed == 'GO:0007088')
 plot.graph.tmp <- RWR_go_mechanisms$all[["GO:0007088"]]
@@ -1175,7 +1233,7 @@ vertex_attr(plot.graph.tmp)<- vertex_attr(plot.graph.tmp) %>%
            size = ifelse(type %in% c("Prot.ego", "Metabolite"), 5,6), 
            size = ifelse(name == seed.plot, 8, size))
 
-png("./figure/cs1_rwr_meca.png", height =  3000, width = 3500, res = 300)
+#png("./figure/cs1_rwr_meca.png", height =  3000, width = 3500, res = 300)
 plot(plot.graph.tmp, layout=l)
 legend("bottomleft", 
        legend = c("SEED", "Genes", "Proteins", "Metabolites", "GO terms", "Ext. neighbours"),
@@ -1186,7 +1244,7 @@ legend("bottomleft",
        box.col="white"
 )
 title("Regulation of mitotic nuclear division")
-dev.off()
+#dev.off()
 
 # stat
 stat_table <- function(list_g){
@@ -1236,10 +1294,15 @@ with_go_annotation <- function(graph, node){
     va <- vertex_attr(ego) %>% as.data.frame() %>% na.omit()
     return(any(va$type == "GO"))
 }
+```
 
+## RWR for annotation
 
+SEED = unknown
 
+`r getwd()`
 
+```{r RWR-2,eval=FALSE}
 ######################################
 # 2. Get annotation SEED = unknown
 ######################################
@@ -1248,59 +1311,10 @@ with_go_annotation <- function(graph, node){
 # get annotation
 # nodes <- V(graph)$name
 # nodes_with_go <- lapply(nodes, function(x)with_go_annotation(graph = graph, node = x))
-load("./unknown_seeds.rda")
+load("./result/unknown_seeds.rda")
 
-find_annotation <- function(graph, seed){
-    seed <- seed[seed %in% V(graph)$name]
-    if(is_empty(seed)){
-        return(NULL)
-    }
-    network <- extract_component(graph, seed)[[1]]
-        
-    MultiplexObject <- RandomWalkRestartMH::create.multiplex(network, Layers_Name = c("component"))
-    AdjMatrix <- compute.adjacency.matrix(MultiplexObject)
-    AdjMatrixNorm <- normalize.multiplex.adjacency(AdjMatrix)   
-    
-        
-    RWR_Results <- Random.Walk.Restart.Multiplex(AdjMatrixNorm, MultiplexObject,seed)
-    return(RWR_Results)
-}
 
-# 
-# test <- find_annotation(FINAL_GO_ANNOT$BP, unknown_seeds[[1]])
-# res <- as.list(unknown_seeds)
-# names(res) = unknown_seeds
-# for(i in unknown_seeds){
-#     print(i)
-#     #res[[i]] <- find_annotation(FINAL_GO_ANNOT$BP, i)
-#     res[[i]] <- find_annotation(FINAL$all, i)
-# }
-# 
-# 
-# #save(res, file = "./analysis/RWR_annot.rda")
-# load("./analysis/RWR_annot.rda")
-# lapply(res, class) %>% unlist %>% table
-# RES <- res[lapply(res, function(x)class(x) == "RWRM_Results") %>% unlist]
-# 
-annot_RWR_res <- function(RWR){
-    
-    if(is(RWR,"try-error") || is.null(RWR$RWRM_Results)){
-        return(as.data.frame(list(NodeNames = NA, Score = NA, position = NA)))
-    }
-    RWR$RWRM_Results %>% #left_join(va.all, by = c("NodeNames"= "name")) %>%
-        mutate(position = seq(1,nrow(.))) %>% #pull(type) %>% unique
-        #filter(type == "go_term") %>%
-        filter(NodeNames %>% str_detect("GO:")) %>%
-        dplyr::top_n(n = -1, wt = position) %>%
-        dplyr::select(NodeNames, Score, position)
-        # pull(position)
-}
-# 
-# go_pos <- lapply(RES, annot_RWR_res)
-
-# final strategie
-
-# 1. aggregé
+# 1. monoplex
 purrr::map(FINAL_GO_ANNOT_short,  ~table(unknown_seeds_nodes %in% V(.x)$name)) 
 
 unknown_seeds_nodes[purrr::map(FINAL,  ~as.numeric(unknown_seeds_nodes %in% V(.x)$name)) %>% as.data.frame() %>%
@@ -1316,76 +1330,18 @@ RES_aggregation <- parallel::mclapply(FINAL_GO_ANNOT_short, function(graph){
 }, mc.cores = 8)
 
 # 2. heterogeity: split
-load(file = "./goterm_map.rda")
+load(file = "./result/goterm_map.rda")
 interaction.df = goterm_map %>% dplyr::select(input, target) %>% unique
-find_annot_RWR_het <- function(graph, seed, interaction.df){
-    va <- vertex_attr(graph) %>% as.data.frame()
-    go_nodes <- filter(va, type == "go_term") %>% pull(name)
-    go_graphS <- igraph::subgraph(graph = graph, v = go_nodes) %>% igraph::decompose()
-    
-    other_nodes <- filter(va, type != "go_term") %>% pull(name)
-    other_graph <- igraph::subgraph(graph = graph, v = other_nodes)
-    
-    bipartite.all  <- interaction.df %>% filter(input %in% other_nodes, target %in% go_nodes)
-    
-    # RWR
-    seed <- seed[seed %in% V(other_graph)$name]
-    if(is_empty(seed)){
-        return(NULL)
-    }
-    Network_1 <- extract_component(other_graph, seed)[[1]]
-    Network_1_MultiplexObject <- create.multiplex(Network_1, Layers_Name = c("Molecule"))
-    
-    
-    bip <- lapply(go_graphS, function(gg){bipartite.all %>% filter(target %in% V(gg)$name, input %in% V(Network_1)$name)})
-    index <- lapply(bip, function(x) ifelse(nrow(x) >0, TRUE, FALSE)) %>% unlist
-    index2 <- lapply(go_graphS, function(x) ifelse(vcount(x) >1, TRUE, FALSE)) %>% unlist
-    
-    bip <- bip[index & index2]
-    go_graphS <- go_graphS[index & index2]
-    
-    res_rwr <- list()
-    for(i in 1:length(go_graphS)){
-        
-        Network_2 <- go_graphS[[i]]
-        interaction.bip <- bip[[i]]
-        MultiplexHetObject <- create.multiplexHet(Multiplex_object = Network_1_MultiplexObject, 
-                                                  Network_2,
-                                                  Nodes_relations = interaction.bip, 
-                                                  SecondNetworkName =  c("GO_TERM"))
-        HetTranMatrix <- compute.transition.matrix(MultiplexHetObject)
-        
-        # seed go ?
-        full_network <- igraph::union(Network_1, 
-                                      igraph::graph_from_data_frame(interaction.bip, directed = FALSE),
-                                      Network_2)
-        
-        #SeedGO <- V(Network_2)$name[1]
-        # short_path <- igraph::shortest.paths(full_network)
-        # SeedGO <- short_path%>% as.data.frame() %>% rownames_to_column("node1") %>% 
-        #     gather(node2, distance, -node1) %>%
-        #     filter(node1 %in% seed) %>%
-        #     filter(node2 %in% V(Network_2)$name) %>%
-        #     top_n(wt = distance, n = -1) %>% pull(node2)
-        SeedGO <- NULL
-        res_rwr[[i]] <- Random.Walk.Restart.MultiplexHet(x = HetTranMatrix,
-                                                                     MultiplexHetObject,
-                                                                     seed,
-                                                                     SecondNet_Seed_Nodes = SeedGO)
-    }
- return(res_rwr)
-}
 
-RES_het <- parallel::mclapply(FINAL_GO_ANNOT_short, function(graph){
-    parallel::mclapply(res, function(seed){
-        find_annot_RWR_het(graph = graph, seed = seed, interaction.df = interaction.df)
-    }, mc.cores = 8)
-}, mc.cores = 8)
 
-# save(RES_aggregation, RES_het, file = "./analysis/RWR_find_annotations.rda" )
-#save(RES_aggregation, RES_het, RWR_go_mechanisms, file = "./analysis/RWR_all_res.rda")
+# RES_het <- parallel::mclapply(FINAL_GO_ANNOT_short, function(graph){
+#     parallel::mclapply(res, function(seed){
+#         find_annot_RWR_het(graph = graph, seed = seed, interaction.df = interaction.df)
+#     }, mc.cores = 8)
+# }, mc.cores = 8)
+
 ## explore result
-load("./RWR_find_annotations.rda")
+load("./result/RWR_find_annotations.rda")
 
 # load("./RES_het.rda")
 # load("./RWR_RES_aggregation.rda")
@@ -1399,55 +1355,32 @@ imap_dfr(RES_aggregation$MF, ~annot_RWR_res(.x) %>% mutate(type = "MF", seed = .
     mutate(mode = "monoplex")
 
 
-RES_RWR_het <- RES_het$BP$KIAA1671
-RES_RWR_het <- RES_het$BP$CCDC18
+# RES_RWR_het <- RES_het$BP$KIAA1671
+# RES_RWR_het <- RES_het$BP$CCDC18
 
-.merge_res_het <- function(RES_RWR_het, i){
-    # print(RES_RWR_het$Multiplex_Seed_Nodes)
-    first_result <- RES_RWR_het$RWRMH_Results_MultiplexNodes #%>%
-    # left_join(va.all, by = c("NodeNames"= "name")) 
-    second_result <- RES_RWR_het$RWRMH_Results_SecondNetNodes %>%
-        # left_join(va.all, by = c("SecondNet_node"= "name")) %>%
-        dplyr::rename(NodeNames = SecondNet_node)
-    rbind(first_result, second_result) %>% 
-        mutate(position = order(Score, decreasing = TRUE)) %>%
-        #filter(type %in% c("go_term")) %>%
-        filter(str_detect(NodeNames, "GO:")) %>%
-        mutate(composition = i)
-}
 
-filtre_res_het <- function(RES_RWR_het){
-    if(is.null(RES_RWR_het) || is(RES_RWR_het, "try-error")){
-        tmp <- list("NodeNames" = character(), "Score" = numeric(), position = integer(), composition = integer()) %>% as.data.frame(stringsAsFactor = FALSE) %>% na.omit()
-        return(tmp)
-    } else {
-        tmp <- imap_dfr(RES_RWR_het, ~.merge_res_het(.x, .y)) %>% 
-            dplyr::top_n(wt = position, n = -1) %>%
-            dplyr::top_n(wt = Score, n = 1)
-        return(tmp)
-    }
-}
+# het_BP <- imap_dfr(RES_het$BP, ~filtre_res_het(.x) %>% mutate(type = "BP", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
+# het_MF <- imap_dfr(RES_het$MF, ~filtre_res_het(.x) %>% mutate(type = "MF", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
+# het_CC <- imap_dfr(RES_het$CC, ~filtre_res_het(.x) %>% mutate(type = "CC", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
 
-het_BP <- imap_dfr(RES_het$BP, ~filtre_res_het(.x) %>% mutate(type = "BP", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
-het_MF <- imap_dfr(RES_het$MF, ~filtre_res_het(.x) %>% mutate(type = "MF", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
-het_CC <- imap_dfr(RES_het$CC, ~filtre_res_het(.x) %>% mutate(type = "CC", seed = .y)) %>% na.omit() %>% mutate(mode = "heterogeneous")
+# tmp.heterogeneous <- rbind(het_BP, het_MF, het_CC) %>% left_join(map_dfr(.$NodeNames %>% unique, ~get_go_info(.x)), by = c("NodeNames"="name")) 
+# 
+# tmp.melt <- rbind(tmp.aggregation, tmp.heterogeneous %>% dplyr::select(-"composition")) %>%
+#     dplyr::select(lab, seed, type, mode, position, description) %>%
+#     spread(mode, position) %>%
+#     rename("lab" = "go") %>%
+#     dplyr::select(seed, type, go, description, monoplex, heterogeneous)
+# write_csv(tmp.melt, path = "./result/RWR_annotations.csv")
+```
 
-tmp.heterogeneous <- rbind(het_BP, het_MF, het_CC) %>% left_join(map_dfr(.$NodeNames %>% unique, ~get_go_info(.x)), by = c("NodeNames"="name")) 
-#lapply(FINAL_GO_ANNOT_short, function(x) sum(unknown_seeds %in% V(x)$name))
+## RWR for intersection between clusters
 
-tmp.melt <- rbind(tmp.aggregation, tmp.heterogeneous %>% dplyr::select(-"composition")) %>%
-    dplyr::select(lab, seed, type, mode, position, description) %>%
-    spread(mode, position) %>%
-    rename("lab" = "go") %>%
-    dplyr::select(seed, type, go, description, monoplex, heterogeneous)
-write_csv(tmp.melt, path = "./RWR_annotations.csv")
-tmp.melt %>% split(.$seed)
-
+```{r RWR-3, eval = FALSE}
 #####################
 # 3. in between nodes
 #####################
-load("./luster_info.rda")
-load("./FINAL.rda")
+load("./result/luster_info.rda")
+load("./result/FINAL.rda")
 #load("./unknown_seeds.rda")
 
 graph <- FINAL$all
@@ -1457,23 +1390,6 @@ SEEDS <- cluster.info %>% filter(block %in% c("mRNA", "prot")) %>%
     #pull(block) %>% table
     pull(molecule)
 
-in_between <- function(graph, seed, k = 10){
-    seed <- seed[seed %in% V(graph)$name]
-    if(is_empty(seed)){
-        return(NULL)
-    }
-    network <- extract_component(graph, seed)[[1]]
-    
-    MultiplexObject <- RandomWalkRestartMH::create.multiplex(network, Layers_Name = c("component"))
-    AdjMatrix <- compute.adjacency.matrix(MultiplexObject)
-    AdjMatrixNorm <- normalize.multiplex.adjacency(AdjMatrix)   
-    
-    
-    RWR_Results <- Random.Walk.Restart.Multiplex(AdjMatrixNorm, MultiplexObject,seed)
-    TopResults  <- create.multiplexNetwork.topResults(RWR_Results,MultiplexObject,k=k)
-    return(TopResults)
-}
-
 res <- as.list(SEEDS)
 names(res) = SEEDS
 for(i in SEEDS){
@@ -1482,46 +1398,19 @@ for(i in SEEDS){
     res[[i]] <- in_between(FINAL$all, i, k = 10)
 }
 # save(res, file = "./RWR_between.rda")
-load("./RWR_between.rda")
+load("./result/RWR_between.rda")
 
 graph <- res$Q8NI77
 seed_name <- "Q8NI77"
 va.all <- vertex_attr(FINAL$all) %>% as.data.frame()
-detect_intersection <- function(graph, seed_name){
-    va <- vertex_attr(graph) %>% as.data.frame() %>%
-    left_join(cluster.info %>% mutate(molecule = molecule %>% str_remove("mRNA_") %>% str_remove("prot_")), by = c("name"="molecule"))
 
-    cluster_seed <- va %>% filter(name == seed_name) %>% pull(cluster)
-    tmp <- va %>% filter(!is.na(cluster)) %>%
-        mutate(cluster.seed = cluster_seed) %>%
-        mutate(cluster.mol = ifelse(name == seed_name, cluster.seed, cluster)) %>%
-        mutate(between = (cluster.seed != cluster.mol)) 
-    flag <- tmp %>% pull(between) %>% any
-    if(flag){
-        to_return <- vertex_attr(graph) %>% as.data.frame() %>% 
-            left_join(va.all) %>%
-            filter(type == "go_term")
-        # add go lab
-        if(any(to_return$type == "go_term")){
-            to_return <- left_join(to_return, map_dfr(to_return$name, ~get_go_info(.x)), by = c("name"="name")) %>%
-                dplyr::select(name, description)  %>%
-                mutate(seed = seed_name, cluster.seed = cluster_seed, cluster.mol = NA)
-        }
-        to_return <- tmp %>% filter(between) %>% mutate(seed = seed_name) %>%
-            dplyr::select(seed, name, cluster.seed, cluster.mol) %>%
-            mutate(description = NA) %>%
-            rbind(to_return)
-        return(to_return)
-    }
-    return(NULL)
-}
 detect_intersection(res$ANLN, seed_name = "ANLN")
 res_between_intersection <- imap(res, ~detect_intersection(.x, seed_name = .y))
 res_between_intersection %>% lapply(is.null) %>% unlist %>% table
 res_between_intersection_with_go <-  res_between_intersection[res_between_intersection %>% lapply(nrow) %>% unlist %>% subset(.>0) %>% names] %>%
     imap_dfr(~{.x %>% mutate(seed = .y)}) %>% dplyr::select(seed, name, description)
 
-write_csv(x = res_between_intersection_with_go, path = "./results/RWR_cluster_intersection.csv")
+write_csv(x = res_between_intersection_with_go, path = "./result/RWR_cluster_intersection.csv")
 
 # != go terms
 res_between_intersection_with_go %>% filter(name %>% str_detect("GO:")) %>% group_by(name, description) %>% summarise(N = n()) %>% arrange(desc(N)) %>%
@@ -1540,8 +1429,8 @@ igraph::make_ego_graph(FINAL$all, nodes = "PIMREG", order = 1) %>% .[[1]] %>% ve
 res_between_intersection_with_go %>% filter(seed %in% (res_between_intersection_with_go %>% filter(name == "GO:0007275") %>% pull(seed)))
 
 
-openxlsx::write.xlsx(x = list("mechanism" = RWR_go_mechanisms_annot, "prediction" = tmp.heterogeneous, "cluster" = res_between_intersection_with_go),
-                     file = "./results/table_hela_rwr.xlsx")
+# openxlsx::write.xlsx(x = list("mechanism" = RWR_go_mechanisms_annot, "prediction" = tmp.heterogeneous, "cluster" = res_between_intersection_with_go),
+#                      file = "./results/table_hela_rwr.xlsx")
 
 ### PLOT FIGURE
 plot.graph.tmp <- res$PIMREG
@@ -1572,7 +1461,7 @@ vertex_attr(plot.graph.tmp)<- vertex_attr(plot.graph.tmp) %>%
                TRUE ~ "grey"))
 
 
-png("./figure/cs1_rwr_cluster.png", height =  3000, width = 3500, res = 300)
+#png("./figure/cs1_rwr_cluster.png", height =  3000, width = 3500, res = 300)
 plot(plot.graph.tmp, layout=l)
 legend("topleft", 
        legend = c("SEED", "Genes", "GO terms"),
@@ -1589,9 +1478,9 @@ legend("bottomright",
        cex = 1.3,
        box.col="white")
 title("PIMREG\n(PICALM Interacting Mitotic Regulator)")
-dev.off()
+#dev.off()
 
-load("./data_filtered.rda")
+load("./result/data_filtered.rda")
 tmp.no.model<- mRNA.fc %>%
     rownames_to_column("sample") %>% 
     mutate(time = sample %>% str_remove("_Rep.")) %>%
@@ -1603,12 +1492,6 @@ tmp.no.model<- mRNA.fc %>%
         time == "S" ~ 2, 
         time == "G2/M" ~3)) %>% left_join( vertex_attr(plot.graph.tmp)) %>% 
     dplyr::select(time, name, value, cluster) %>%
-    # mutate(cluster = case_when(
-    #     cluster == "Down_Up" ~ "Cluster 1", 
-    #     cluster == "Up_Up" ~ "Cluster 2",
-    #     cluster == "Down_Down" ~ "Cluster 3",
-    #     cluster == "Up_Down" ~ "Cluster 4",
-    # )) %>%    
     arrange(cluster) 
 order.name <- tmp.no.model$name %>% unique
 
@@ -1622,16 +1505,10 @@ tmp.model <- mRNA.filter %>%  rownames_to_column("time") %>%
     filter(!is.na(cluster)) %>%
     dplyr::select(time, name, value, cluster) %>%
     mutate(time = as.numeric(time)) %>%
-    # mutate(cluster = case_when(
-    #     cluster == "Down_Up" ~ "Cluster 1", 
-    #     cluster == "Up_Up" ~ "Cluster 2",
-    #     cluster == "Down_Down" ~ "Cluster 3",
-    #     cluster == "Up_Down" ~ "Cluster 4",
-    # ))  %>%
     mutate(name = factor(name, levels = order.name))
 
 
-png("./figure/cs1_rwr_cluster_dyn.png", height =  2500, width = 2000, res = 300)
+#png("./figure/cs1_rwr_cluster_dyn.png", height =  2500, width = 2000, res = 300)
 ggplot(tmp.model, aes(x=time, y=value, group = name, col = cluster)) + geom_line() +
     geom_point(data = tmp.no.model) +
     #facet_wrap(name~., dir = "v", ncol = 1, scales = "free") +
@@ -1641,6 +1518,5 @@ ggplot(tmp.model, aes(x=time, y=value, group = name, col = cluster)) + geom_line
     scale_color_manual(values = c("darkgreen", "orange")) +
     labs(x = "Time", y = "Expression value", col = "Cluster") +
     theme(legend.position = "top")
-dev.off()
+#dev.off()
 ```
-
