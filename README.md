@@ -10,13 +10,17 @@ We applied the method on 3 case studies with various multi-omics designs and ide
 Moreover, we highlighted interplay in the kinetics that could help identify novel biological mechanisms.
 This method is available as an R package \texttt{netOmics} to readily suit any application. 
 
-In this repository, you will find R scripts to conduct both analysis (`CS1_HeLa_Cell_Cycling/`, `CS2_Maize_Aphid_Feeding/`, `CS3_Diabetes_seasonal`).
+In this repository, you will find R scripts to conduct both analysis: 
+
+- `CS1_HeLa_Cell_Cycling/`
+- `CS2_Maize_Aphid_Feeding/`
+- `CS3_Diabetes_seasonal` (use of the new `netOmics` R package).
 
 In each folder, there are:
 
 * `.Rmd` and `.html` files: main scripts and compiled version to be viewed in a browser
 * `data/` folder: raw data and used databases
-* `figure/` folder: main figures display in the article
+* `figure/` folder: main figures displayed in the article
 * `result/` folder: intermediate `.rda` files and output files (`.csv`/`.xlsx`)
 
 The following R packages are required:
