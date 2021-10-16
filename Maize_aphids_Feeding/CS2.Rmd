@@ -8,7 +8,7 @@ knitr::opts_chunk$set(cache = TRUE)
 dir.create("./figure")
 ```
 
-```{r, message=FALSE}
+```{r, message=FALSE, cache=F}
 library(tidyverse)
 library(mixOmics)
 library(timeOmics)
@@ -312,7 +312,7 @@ imap_dfr(GRN_PPIM_METABO, ~vertex_attr(.x$graph) %>% as.data.frame %>% mutate(cl
 
 # Enrichment ORA
 
-```{r ora }
+```{r ora, eval = FALSE}
 genes_v3v4 <- read_tsv("data/gene_model_xref_v4.txt", skip = 4) %>% dplyr::select(c("v4_gene_model", "v3_gene_model", "Entrez"))
 
 enrich <- list()
@@ -357,6 +357,10 @@ GRN_PPIM_METABO_GO <- lapply(GRN_PPIM_METABO, function(x) add_go_term_layer(x$gr
 #save(GRN_PPIM_METABO_GO, interaction_gene_go, file = "GRN_PPIM_METABO_GO.rda")
 load("GRN_PPIM_METABO_GO.rda")
 ```
+```{r}
+load("GRN_PPIM_METABO_GO.rda")
+```
+
 ```{r ora_res}
 imap_dfr(GRN_PPIM_METABO_GO, ~get_stats_graph(.x) %>% as.data.frame %>% mutate(cluster = .y)) 
 ```

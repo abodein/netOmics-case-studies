@@ -439,23 +439,23 @@ annot_RWR_res <- function(RWR){
     # pull(position)
 }
 
-# 1) go
-go.info <- map_dfr(read_tsv("../analysis/gene_goterm_map.tsv")$target %>% unique, ~get_go_info(.x)) %>% 
-    dplyr::select(-source)
-
-
-# 2) Gene
-gene.info <- read_tsv("../ressources/genes_all.txt")[c(2,3,4)] %>% na.omit %>%
-    purrr::set_names(c("name", "lab", "description"))
-
-# 3) Met
-met.info <- read_tsv("../../vrac/kegg_compound.tsv") %>%
-    dplyr::select(c(ENTRY, NAME)) %>%
-    mutate(NAME = str_remove(NAME, ";;.*")) %>% 
-    set_names(set_names(c("name", "lab"))) %>%
-    mutate(description = lab)
-
-rbind.info <- rbind(go.info, met.info, gene.info)
+# # 1) go
+# go.info <- map_dfr(read_tsv("../analysis/gene_goterm_map.tsv")$target %>% unique, ~get_go_info(.x)) %>% 
+#     dplyr::select(-source)
+# 
+# 
+# # 2) Gene
+# gene.info <- read_tsv("../ressources/genes_all.txt")[c(2,3,4)] %>% na.omit %>%
+#     purrr::set_names(c("name", "lab", "description"))
+# 
+# # 3) Met
+# met.info <- read_tsv("../../vrac/kegg_compound.tsv") %>%
+#     dplyr::select(c(ENTRY, NAME)) %>%
+#     mutate(NAME = str_remove(NAME, ";;.*")) %>% 
+#     set_names(set_names(c("name", "lab"))) %>%
+#     mutate(description = lab)
+# 
+# rbind.info <- rbind(go.info, met.info, gene.info)
 
 
 detect_intersection <- function(graph, seed_name, va.all){
